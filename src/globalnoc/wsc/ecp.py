@@ -5,7 +5,7 @@ from lxml import etree as ET
 
 from globalnoc.wsc.exc import LoginFailure, RemoteMethodException
 
-namespaces = {
+_NAMESPACES = {
     "S": "http://schemas.xmlsoap.org/soap/envelope/",
     "paos": "urn:liberty:paos:2003-08",
     "ecp": "urn:oasis:names:tc:SAML:2.0:profiles:SSO:ecp",
@@ -50,18 +50,18 @@ class ECP(httpx.Auth):
 
             with httpx.Client() as session:
                 # Extract the relay state to use later
-                (relaystate,) = ET.XPath("S:Header/ecp:RelayState", namespaces=namespaces)(
+                (relaystate,) = ET.XPath("S:Header/ecp:RelayState", namespaces=_NAMESPACES)(
                     e
                 )
                 # Extract the response consumer URL to compare later
-                responseconsumer = ET.XPath("S:Header/paos:Request", namespaces=namespaces)(
+                responseconsumer = ET.XPath("S:Header/paos:Request", namespaces=_NAMESPACES)(
                     e
                 )[0].get("responseConsumerURL")
 
                 logging.debug("SP expects the response at: %s", responseconsumer)
 
                 # Clean up the SP login request
-                e.remove(ET.XPath("S:Header", namespaces=namespaces)(e)[0])
+                e.remove(ET.XPath("S:Header", namespaces=_NAMESPACES)(e)[0])
 
                 # Log into the IdP with the SP request
                 logging.debug(
@@ -86,7 +86,7 @@ class ECP(httpx.Auth):
 
                 # Make sure we got back the same response consumer URL
                 # and assertion consumer service URL
-                idpACS = ET.XPath("S:Header/ecp:Response", namespaces=namespaces)(ee)[
+                idpACS = ET.XPath("S:Header/ecp:Response", namespaces=_NAMESPACES)(ee)[
                     0
                 ].get("AssertionConsumerServiceURL")
                 logging.debug("IdP said to send the response to %s", idpACS)
@@ -98,7 +98,7 @@ class ECP(httpx.Auth):
                 if (
                     ET.XPath(
                         "S:Body/saml2p:Response/saml2p:Status/saml2p:StatusCode",
-                        namespaces=namespaces,
+                        namespaces=_NAMESPACES,
                     )(ee)[0].get("Value")
                     != "urn:oasis:names:tc:SAML:2.0:status:Success"
                 ):
@@ -107,7 +107,7 @@ class ECP(httpx.Auth):
                 logging.debug("IdP accepted login.")
 
                 # Clean up login token
-                (h,) = ET.XPath("S:Header", namespaces=namespaces)(ee)
+                (h,) = ET.XPath("S:Header", namespaces=_NAMESPACES)(ee)
 
                 for el in h:
                     h.remove(el)
