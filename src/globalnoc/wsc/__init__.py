@@ -291,7 +291,7 @@ class WSC(object):
 
     @urn.setter
     def urn(self, urn):
-        self._ns_etree = ET.parse(self.ns)
+        ns_etree = ET.parse(self.ns)
 
         if not self._ns:
             raise NoNameService()
@@ -303,7 +303,7 @@ class WSC(object):
 
         ns_cloud = [
             c
-            for c in self._ns_etree.findall("./cloud")
+            for c in ns_etree.findall("./cloud")
             if c.attrib.get("id") == urn_cloud
         ]
 
