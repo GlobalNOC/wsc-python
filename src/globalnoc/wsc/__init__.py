@@ -2,7 +2,7 @@ import http.cookiejar
 import logging
 import os
 
-import requests
+import httpx
 from json import JSONDecodeError
 from lxml import etree as ET
 
@@ -40,144 +40,148 @@ class LoginFailure(Exception):
     pass
 
 
-class ECP(requests.auth.AuthBase):
-    def __init__(self, username, password, realm, debug=False):
+class ECP(httpx.Auth):
+    requires_response_body = True
+
+    def __init__(self, username, password, realm, cookies=None, debug=False):
         self.debug = debug
         self.username = username
         self.password = password
         self.realm = realm
+        # Reference to the outer session's cookie jar; cookies saved here
+        # will be sent automatically by the httpx Client on future requests,
+        # allowing the SP to recognize the session without repeating ECP.
+        self.cookies = cookies
 
-    def handle_ecp(self, r: requests.Request, **kwargs):
-        if r.headers.get("content-type", None) == "application/vnd.paos+xml":
-            logging.debug("Got PAOS Header. Redirecting through ECP login.")
-
-            e = ET.fromstring(r.content)
-            r.close()
-
-            session = requests.Session()
-
-            # Extract the relay state to use later
-            (relaystate,) = ET.XPath("S:Header/ecp:RelayState", namespaces=namespaces)(
-                e
-            )
-            # Extract the response consumer URL to compare later
-            responseconsumer = ET.XPath("S:Header/paos:Request", namespaces=namespaces)(
-                e
-            )[0].get("responseConsumerURL")
-
-            logging.debug("SP expects the response at: %s", responseconsumer)
-
-            # Clean up the SP login request
-            e.remove(ET.XPath("S:Header", namespaces=namespaces)(e)[0])
-
-            # Log into the IdP  with the SP request
-            logging.debug(
-                "Logging into the IdP via %s as %s", self.realm, self.username
-            )
-
-            login_r = session.post(
-                self.realm,
-                auth=(self.username, self.password),
-                data=ET.tostring(e),
-                headers={"content-type": "text/xml"},
-            )
-
-            if login_r.status_code != requests.codes.ok:
-                raise RemoteMethodException(
-                    "Received status code {0} from IdP".format(login_r.status_code)
-                )
-
-            ee = ET.fromstring(login_r.content)
-
-            # Make sure we got back the same response consumer URL
-            # and assertion consumer service URL
-            idpACS = ET.XPath("S:Header/ecp:Response", namespaces=namespaces)(ee)[
-                0
-            ].get("AssertionConsumerServiceURL")
-            logging.debug("IdP said to send the response to %s", idpACS)
-
-            if responseconsumer != idpACS:
-                raise LoginFailure("SP and IdP ACS mismatch")
-
-            # Make sure we got a successful login
-            if (
-                ET.XPath(
-                    "S:Body/saml2p:Response/saml2p:Status/saml2p:StatusCode",
-                    namespaces=namespaces,
-                )(ee)[0].get("Value")
-                != "urn:oasis:names:tc:SAML:2.0:status:Success"
-            ):
-                raise LoginFailure("Login to IdP unsuccessful")
-
-            logging.debug("IdP accepted login.")
-
-            # Clean up login token
-            (h,) = ET.XPath("S:Header", namespaces=namespaces)(ee)
-
-            for el in h:
-                h.remove(el)
-            h.append(relaystate)
-
-            # Pass login token to SP
-            logging.debug("Sending login token to SP.")
-
-            return_r = session.post(
-                responseconsumer,
-                data=ET.tostring(ee),
-                headers={"Content-Type": "application/vnd.paos+xml"},
-                allow_redirects=False,
-            )
-
-            if return_r.status_code not in [requests.codes.ok, requests.codes.found]:
-                raise RemoteMethodException(
-                    "Received status code {0} from SP".format(return_r.status_code)
-                )
-
-            # Prepare the original request with the new login cookies
-            prep = r.request.copy()
-
-            if not hasattr(prep, "_cookies"):
-                prep._cookies = requests.cookies.RequestsCookieJar()
-
-            requests.cookies.extract_cookies_to_jar(prep._cookies, r.request, r.raw)
-            prep._cookies.update(session.cookies)
-            prep.prepare_cookies(prep._cookies)
-
-            # Re-launch the original request
-            logging.debug("Re-launching original request after logging in.")
-
-            _r = r.connection.send(prep, **kwargs)
-
-            # Add the login flow to the request history
-            _r.history.append(r)
-            _r.history.append(login_r)
-            _r.history.append(return_r)
-
-            _r.request = prep
-
-            return _r
-
-        logging.debug(
-            "No PAOS header. Assuming already logged in, or no Shib required."
-        )
-        return r
-
-    def __call__(self, r):
+    def auth_flow(self, request):
         # Update or add Accept header to indicate we want to do ECP
-        if "Accept" in r.headers:
-            r.headers["Accept"] += ", application/vnd.paos+xml"
+        if "Accept" in request.headers:
+            request.headers["Accept"] += ", application/vnd.paos+xml"
         else:
-            r.headers["Accept"] = "*/*, application/vnd.paos+xml"
+            request.headers["Accept"] = "*/*, application/vnd.paos+xml"
 
         # Signal that we support ECP
-        r.headers["PAOS"] = (
+        request.headers["PAOS"] = (
             'ver="urn:liberty:paos:2003-08";'
             '"urn:oasis:names:tc:SAML:2.0:profiles:SSO:ecp"'
         )
 
-        r.register_hook("response", self.handle_ecp)
+        response = yield request
 
-        return r
+        if response.headers.get("content-type", None) == "application/vnd.paos+xml":
+            logging.debug("Got PAOS Header. Redirecting through ECP login.")
+
+            e = ET.fromstring(response.content)
+
+            with httpx.Client() as session:
+                # Extract the relay state to use later
+                (relaystate,) = ET.XPath("S:Header/ecp:RelayState", namespaces=namespaces)(
+                    e
+                )
+                # Extract the response consumer URL to compare later
+                responseconsumer = ET.XPath("S:Header/paos:Request", namespaces=namespaces)(
+                    e
+                )[0].get("responseConsumerURL")
+
+                logging.debug("SP expects the response at: %s", responseconsumer)
+
+                # Clean up the SP login request
+                e.remove(ET.XPath("S:Header", namespaces=namespaces)(e)[0])
+
+                # Log into the IdP with the SP request
+                logging.debug(
+                    "Logging into the IdP via %s as %s", self.realm, self.username
+                )
+
+                login_r = session.post(
+                    self.realm,
+                    auth=(self.username, self.password),
+                    content=ET.tostring(e),
+                    headers={"content-type": "text/xml"},
+                )
+
+                try:
+                    login_r.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    raise RemoteMethodException(
+                        f"Received status code {login_r.status_code} from IdP"
+                    ) from e
+
+                ee = ET.fromstring(login_r.content)
+
+                # Make sure we got back the same response consumer URL
+                # and assertion consumer service URL
+                idpACS = ET.XPath("S:Header/ecp:Response", namespaces=namespaces)(ee)[
+                    0
+                ].get("AssertionConsumerServiceURL")
+                logging.debug("IdP said to send the response to %s", idpACS)
+
+                if responseconsumer != idpACS:
+                    raise LoginFailure("SP and IdP ACS mismatch")
+
+                # Make sure we got a successful login
+                if (
+                    ET.XPath(
+                        "S:Body/saml2p:Response/saml2p:Status/saml2p:StatusCode",
+                        namespaces=namespaces,
+                    )(ee)[0].get("Value")
+                    != "urn:oasis:names:tc:SAML:2.0:status:Success"
+                ):
+                    raise LoginFailure("Login to IdP unsuccessful")
+
+                logging.debug("IdP accepted login.")
+
+                # Clean up login token
+                (h,) = ET.XPath("S:Header", namespaces=namespaces)(ee)
+
+                for el in h:
+                    h.remove(el)
+                h.append(relaystate)
+
+                # Pass login token to SP
+                logging.debug("Sending login token to SP.")
+
+                return_r = session.post(
+                    responseconsumer,
+                    content=ET.tostring(ee),
+                    headers={"Content-Type": "application/vnd.paos+xml"},
+                    follow_redirects=False,
+                )
+
+                if return_r.status_code not in (httpx.codes.OK, httpx.codes.FOUND):
+                    raise RemoteMethodException(
+                        f"Received status code {return_r.status_code} from SP"
+                    )
+
+                # Persist login cookies to the outer session for reuse
+                if self.cookies is not None:
+                    for cookie in session.cookies.jar:
+                        self.cookies.jar.set_cookie(cookie)
+
+                # Prepare the original request with the new login cookies
+                cookie_header = "; ".join(
+                    f"{c.name}={c.value}" for c in session.cookies.jar
+                )
+
+            # Re-launch the original request after logging in
+            logging.debug("Re-launching original request after logging in.")
+
+            headers = dict(request.headers)
+            if cookie_header:
+                headers["Cookie"] = cookie_header
+
+            retry = httpx.Request(
+                method=request.method,
+                url=request.url,
+                headers=headers,
+                content=request.content,
+            )
+            yield retry
+
+        else:
+            logging.debug(
+                "No PAOS header. Assuming already logged in, or no Shib required."
+            )
 
     def __eq__(self, other):
         return all(
