@@ -17,28 +17,14 @@ namespaces = {
 }
 
 
-class NoNameService(Exception):
-    pass
-
-
-class NoURL(Exception):
-    pass
-
-
-class UndefinedURN(Exception):
-    pass
-
-
-class InvalidURN(Exception):
-    pass
-
-
-class RemoteMethodException(Exception):
-    pass
-
-
-class LoginFailure(Exception):
-    pass
+from globalnoc.wsc.exc import (
+    InvalidURN,
+    LoginFailure,
+    NoNameService,
+    NoURL,
+    RemoteMethodException,
+    UndefinedURN,
+)
 
 
 class ECP(httpx.Auth):
