@@ -401,7 +401,7 @@ class WSC(object):
                     data=data,
                     timeout=self.timeout,
                 )
-            elif "https://" in self.realm:
+            elif self.realm.startswith("https://"):
                 logging.debug(
                     "Realm set and looks like Shibboleth ECP. Launching with ECP"
                 )
