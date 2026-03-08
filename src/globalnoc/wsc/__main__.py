@@ -113,7 +113,7 @@ def main():
             if not args.noresult:
                 print("Problem loading cookies. Continuing without any.")
 
-    res = w.__getattr__(args.method)(**dict([a.split("=", 1) for a in args.args]))
+    res = getattr(w, args.method)(**dict([a.split("=", 1) for a in args.args]))
 
     if not args.noresult:
         if args.raw:
