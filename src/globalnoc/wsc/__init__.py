@@ -2,6 +2,7 @@ import http.cookiejar
 import logging
 
 import requests
+from json import JSONDecodeError
 from lxml import etree as ET
 
 namespaces = {
@@ -432,8 +433,8 @@ class WSC(object):
 
             try:
                 return r.json()
-            except Exception:
-                raise RemoteMethodException("JSON parse error")
+            except JSONDecodeError as e:
+                raise RemoteMethodException("JSON parse error") from e
 
         return handler
 
