@@ -129,10 +129,10 @@ class WSC:
 
     @urn.setter
     def urn(self, urn):
-        ns_etree = ET.parse(self.ns)
-
         if not self.ns:
             raise NoNameService()
+
+        ns_etree = ET.parse(self.ns)
 
         if not urn.startswith("urn:publicid:IDN+grnoc.iu.edu:"):
             raise InvalidURN()
