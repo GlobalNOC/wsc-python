@@ -43,6 +43,8 @@ class WSC:
         self.session = httpx.Client()
 
     def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
         return self._remoteHandler(name)
 
     def _load(self, filename: str):
