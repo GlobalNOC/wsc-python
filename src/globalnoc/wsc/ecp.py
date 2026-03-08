@@ -166,6 +166,3 @@ class ECP(httpx.Auth):
                 self.realm == getattr(other, "realm", None),
             ]
         )
-
-    def __ne__(self, other):
-        return not self == other
