@@ -446,6 +446,7 @@ class WSC(object):
         for cookie in self.session.cookies:
             jar.set_cookie(cookie)
         jar.save(ignore_discard=True)
+        os.chmod(filename, 0o600)
 
     def _load(self, filename: str):
         jar = http.cookiejar.LWPCookieJar(filename)
