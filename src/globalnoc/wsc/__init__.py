@@ -55,7 +55,7 @@ class WSC:
             self.session.cookies.jar.set_cookie(cookie)
 
     def _remoteHandler(self, name):
-        def handler(*args, **kwargs):
+        def handler(**kwargs):
             if not self.url:
                 raise NoURL()
 
