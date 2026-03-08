@@ -1,34 +1,21 @@
-[tool.poetry]
-name = "globalnoc-wsc"
-version = "1.0.2"
-description = "GlobalNOC Web Service Client with SAML2 and basic auth support"
-authors = ["GlobalNOC SysEng <syseng@globalnoc.iu.edu>"]
-license = "Apache-2.0"
-readme = "README.md"
-packages = [{include = "globalnoc", from="src"}]
-
-[tool.poetry.dependencies]
-python = ">=3.8"
-requests = "^2.28.2"
-lxml = ">=4.9.2"
-
-# EL7 does not have OpenSSL 1.1.1, which is required for urllib3 v2
-# python >= 3.10 requires OpenSSL 1.1.1
-# Use urllib3 v2 on newer python where we can guarantee OpenSSL 1.1.1+
-# and urlliv3 v1 older python versions
-urllib3 = [
-    {version = "<2.0.0", python = "<3.10"},
-    {version = "^2.0.2", python = ">=3.10"}
+[project]
+dependencies = [
+  "httpx>=0.28.1",
+  "lxml>=6.0.2",
 ]
+description = "GlobalNOC WebServicesClient for Python"
+name = "globalnoc-wsc"
+readme = "README.md"
+requires-python = ">=3.11"
+version = "2.0.0"
 
-[tool.poetry.group.dev.dependencies]
-black = "^23.3.0"
-flake8 = "^6.0.0"
-pytest = "^7.2.2"
-
-[tool.poetry.scripts]
+[project.scripts]
 "wsutil.py" = "globalnoc.wsc.__main__:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+build-backend = "uv_build"
+requires = ["uv_build>=0.10.9,<0.11.0"]
+
+[tool.uv.build-backend]
+module-name = "globalnoc"
+source-dir = "src"
