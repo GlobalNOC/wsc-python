@@ -7,9 +7,10 @@ from globalnoc.wsc.exc import (
     RemoteMethodException,
     UndefinedURN,
 )
-from globalnoc.wsc.wsc import WSC
+from globalnoc.wsc.wsc import AsyncWSC, WSC
 
 __all__ = [
+    "AsyncWSC",
     "ECP",
     "InvalidURN",
     "LoginFailure",
