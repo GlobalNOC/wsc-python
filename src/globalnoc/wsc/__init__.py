@@ -1,6 +1,7 @@
 import http.cookiejar
 import logging
 import os
+from dataclasses import dataclass, field
 
 import httpx
 from json import JSONDecodeError
@@ -196,100 +197,108 @@ class ECP(httpx.Auth):
         return not self == other
 
 
-class WSC(object):
-    _debug: bool = False
-    _url: str = None
-    _username: str = None
-    _password: str = None
-    _urn: str = None
-    _ns: str = None
-    _ns_etree = None
-    _realm: str = None
-    _raw: bool = False
-    _strict_content_type: bool = True
-    _session: requests.Session = None
-    _timeout: int = None
+@dataclass
+class WSC:
+    debug: bool = False
+    ns: str = "/etc/grnoc/name-service-cacher/name-service.xml"
+    password: str = field(default=None, repr=False)
+    raw: bool = False
+    realm: str = None
+    session: httpx.Client = field(default=None, init=False, repr=False)
+    strict_content_type: bool = True
+    timeout: int = 60
+    url: str = None
+    _urn: str = field(default=None, init=False)
+    username: str = None
 
-    def __init__(
-        self, ns="/etc/grnoc/name-service-cacher/name-service.xml", debug=False
-    ):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def __post_init__(self):
         logging.debug("Initialized WSC object")
-        self._debug = debug
-        self.ns = ns
-        self.session = requests.Session()
-        self.timeout = 60
+        self.session = httpx.Client()
 
-    @property
-    def ns(self):
-        return self._ns
+    def __getattr__(self, name):
+        return self._remoteHandler(name)
 
-    @ns.setter
-    def ns(self, ns):
-        logging.debug("Setting NS cache: %s", ns)
-        self._ns = ns
+    def _load(self, filename: str):
+        jar = http.cookiejar.LWPCookieJar(filename)
 
-    @property
-    def password(self):
-        return self._password
+        jar.load(ignore_discard=True)
+        for cookie in jar:
+            self.session.cookies.jar.set_cookie(cookie)
 
-    @password.setter
-    def password(self, password):
-        logging.debug("Setting Password")
-        self._password = password
+    def _remoteHandler(self, name):
+        def handler(*args, **kwargs):
+            if not self.url:
+                raise NoURL()
 
-    @property
-    def raw(self):
-        return self._raw
+            data = {"method": name}
+            data.update(kwargs)
 
-    @raw.setter
-    def raw(self, raw):
-        logging.debug("Setting Raw: %s", raw)
-        self._raw = raw
+            if not self.realm:
+                logging.debug(
+                    "Realm not set. Launching as HTTP Basic without a fixed realm."
+                )
+                r = self.session.post(
+                    self.url,
+                    auth=(self.username, self.password),
+                    data=data,
+                    timeout=self.timeout,
+                )
+            elif self.realm.startswith("https://"):
+                logging.debug(
+                    "Realm set and looks like Shibboleth ECP. Launching with ECP"
+                )
+                r = self.session.post(
+                    self.url,
+                    auth=ECP(
+                        self.username, self.password, self.realm,
+                        cookies=self.session.cookies, debug=self.debug,
+                    ),
+                    data=data,
+                    timeout=self.timeout,
+                )
+            else:
+                raise LoginFailure("Realm is not an IdP ECP Endpoint")
 
-    @property
-    def realm(self):
-        return self._realm
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                raise RemoteMethodException(
+                    f"Received status code {r.status_code}"
+                ) from e
 
-    @realm.setter
-    def realm(self, realm):
-        logging.debug("Setting Realm: %s", realm)
-        self._realm = realm
+            if self.raw:
+                return r.content
 
-    @property
-    def session(self):
-        return self._session
+            if self.strict_content_type and "/json" not in r.headers.get(
+                "content-type"
+            ):
+                raise RemoteMethodException(
+                    "Unknown content type {0}".format(r.headers.get("content-type"))
+                )
 
-    @session.setter
-    def session(self, session):
-        logging.debug("Setting Session: %s", session)
-        self._session = session
+            try:
+                return r.json()
+            except JSONDecodeError as e:
+                raise RemoteMethodException("JSON parse error") from e
 
-    @property
-    def strict_content_type(self):
-        return self._strict_content_type
+        return handler
 
-    @strict_content_type.setter
-    def strict_content_type(self, strict_content_type):
-        logging.debug("Setting Strict Content Type: %s", strict_content_type)
-        self._strict_content_type = strict_content_type
+    def _save(self, filename: str):
+        jar = http.cookiejar.LWPCookieJar(filename)
 
-    @property
-    def timeout(self):
-        return self._timeout
+        for cookie in self.session.cookies.jar:
+            jar.set_cookie(cookie)
+        jar.save(ignore_discard=True)
+        os.chmod(filename, 0o600)
 
-    @timeout.setter
-    def timeout(self, timeout):
-        logging.debug("Setting Timeout: %s", timeout)
-        self._timeout = timeout
-
-    @property
-    def url(self):
-        return self._url
-
-    @url.setter
-    def url(self, url):
-        logging.debug("Setting URL: %s", url)
-        self._url = url
+    def close(self):
+        self.session.close()
 
     @property
     def urn(self):
@@ -299,7 +308,7 @@ class WSC(object):
     def urn(self, urn):
         ns_etree = ET.parse(self.ns)
 
-        if not self._ns:
+        if not self.ns:
             raise NoNameService()
 
         if not urn.startswith("urn:publicid:IDN+grnoc.iu.edu:"):
@@ -378,85 +387,3 @@ class WSC(object):
 
         self.url = ns_locations[0].attrib.get("url")
         self._urn = urn
-
-    @property
-    def username(self):
-        return self._username
-
-    @username.setter
-    def username(self, username):
-        logging.debug("Setting Username: %s", username)
-        self._username = username
-
-    def _remoteHandler(self, name):
-        def handler(*args, **kwargs):
-            if not self.url:
-                raise NoURL()
-
-            data = {"method": name}
-            data.update(kwargs)
-
-            if not self.realm:
-                logging.debug(
-                    "Realm not set. Launching as HTTP Basic without a fixed realm."
-                )
-                r = self.session.post(
-                    self.url,
-                    auth=(self.username, self.password),
-                    data=data,
-                    timeout=self.timeout,
-                )
-            elif self.realm.startswith("https://"):
-                logging.debug(
-                    "Realm set and looks like Shibboleth ECP. Launching with ECP"
-                )
-                r = self.session.post(
-                    self.url,
-                    auth=ECP(
-                        self.username, self.password, self.realm, debug=self._debug
-                    ),
-                    data=data,
-                    timeout=self.timeout,
-                )
-            else:
-                raise LoginFailure("Realm is not an IdP ECP Endpoint")
-
-            if r.status_code != requests.codes.ok:
-                raise RemoteMethodException(
-                    "Received status code {0}".format(r.status_code)
-                )
-
-            if self._raw:
-                return r.content
-
-            if self._strict_content_type and "/json" not in r.headers.get(
-                "content-type"
-            ):
-                raise RemoteMethodException(
-                    "Unknown content type {0}".format(r.headers.get("content-type"))
-                )
-
-            try:
-                return r.json()
-            except JSONDecodeError as e:
-                raise RemoteMethodException("JSON parse error") from e
-
-        return handler
-
-    def __getattr__(self, name):
-        return self._remoteHandler(name)
-
-    def _save(self, filename: str):
-        jar = http.cookiejar.LWPCookieJar(filename)
-
-        for cookie in self.session.cookies:
-            jar.set_cookie(cookie)
-        jar.save(ignore_discard=True)
-        os.chmod(filename, 0o600)
-
-    def _load(self, filename: str):
-        jar = http.cookiejar.LWPCookieJar(filename)
-
-        jar.load(ignore_discard=True)
-        for cookie in jar:
-            self.session.cookies.set_cookie(cookie)
