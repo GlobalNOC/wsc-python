@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import sys
 from getpass import getpass
 from pprint import pprint
 
@@ -130,4 +131,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
