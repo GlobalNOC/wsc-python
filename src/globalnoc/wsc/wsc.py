@@ -87,9 +87,16 @@ class _WSCBase:
             )
 
         try:
-            return r.json()
+            data = r.json()
         except JSONDecodeError as e:
             raise RemoteMethodException("JSON parse error") from e
+
+        if isinstance(data, dict) and int(data.get("error", 0)) == 1:
+            error_text = data.get("error_text", "UNKNOWN ERROR")
+            msg = f"API returned an error: {error_text}"
+            raise RemoteMethodException(msg)
+
+        return data
 
     def _save(self, filename: str):
         jar = http.cookiejar.LWPCookieJar(filename)
