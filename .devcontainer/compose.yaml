@@ -1,0 +1,8 @@
+---
+services:
+  devc:
+    image: containers.github.grnoc.iu.edu/shared/wsc-python-devc:latest
+    init: true
+    volumes:
+      - ..:/workspace:cached,z
+    command: sleep infinity
