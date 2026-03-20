@@ -2,10 +2,12 @@
 
 import argparse
 import logging
+import sys
 from getpass import getpass
 from pprint import pprint
 
 import globalnoc.wsc
+from globalnoc.wsc import LoginFailure, RemoteMethodException
 
 
 def kv(value):
@@ -113,7 +115,11 @@ def main():
             if not args.noresult:
                 print("Problem loading cookies. Continuing without any.")
 
-    res = w.__getattr__(args.method)(**dict([a.split("=", 1) for a in args.args]))
+    try:
+        res = getattr(w, args.method)(**dict([a.split("=", 1) for a in args.args]))
+    except (LoginFailure, RemoteMethodException) as e:
+        print(f"Error: {e}")
+        return 1
 
     if not args.noresult:
         if args.raw:
@@ -130,4 +136,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

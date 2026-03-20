@@ -1,0 +1,75 @@
+---
+name: Build RPM
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  build-rpm:
+    name: Build RPM artifact
+    runs-on: self-hosted
+
+    container:
+      image: containers.github.grnoc.iu.edu/shared/wsc-python-devc:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build RPM
+        run: make rpm
+
+      - name: Import RPM signing key
+        env:
+          RPM_SIGNING_KEY: ${{ secrets.OEL8_RPM_SIGNING_KEY }}
+          RPM_SIGN_PASSPHRASE: ${{ secrets.OEL8_RPM_SIGNING_PASSPHRASE }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME"
+          chmod 700 "$GNUPGHOME"
+          printf '%s' "$RPM_SIGNING_KEY" | gpg --batch --pinentry-mode loopback --passphrase "$RPM_SIGN_PASSPHRASE" --import
+          gpg --batch --list-secret-keys 'syseng@grnoc.iu.edu' >/dev/null
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Sign RPM
+        env:
+          RPM_SIGN_PASSPHRASE: ${{ secrets.OEL8_RPM_SIGNING_PASSPHRASE }}
+        run: |
+          cat > ~/.rpmmacros <<EOF
+          %_signature gpg
+          %_gpg_name syseng@grnoc.iu.edu
+          %_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback --passphrase "$RPM_SIGN_PASSPHRASE"
+          EOF
+          shopt -s globstar nullglob
+          rpms=(dist/*.rpm)
+          if [[ ${#rpms[@]} -eq 0 ]]; then
+            echo "No RPMs found to sign" >&2
+            exit 1
+          fi
+          rpm --addsign "${rpms[@]}"
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: rpms
+          path: dist/*.rpm
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Summarize build output
+        run: |
+          {
+            echo "## RPM Build"
+            echo
+            echo "Artifact: rpms"
+            echo
+            echo "Built files:"
+            ls -l dist/*.rpm
+          } >> "$GITHUB_STEP_SUMMARY"
