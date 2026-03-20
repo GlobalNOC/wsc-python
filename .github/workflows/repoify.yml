@@ -1,0 +1,30 @@
+---
+name: Repoify Signed RPM
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Build RPM
+    types:
+      - completed
+
+jobs:
+  repoify-rpms:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+
+    steps:
+      - name: Run AWX Repoify Job
+        uses: bgeels/github-action-trigger-awx@add-support-for-workflow-templates
+        with:
+          ansible_tower_user: gha_api
+          ansible_tower_pass: ${{ secrets.GHA_API_PASSWORD }}
+          ansible_tower_url: https://awx.k8s.grnoc.iu.edu
+          job_template_id: 313
+          extra_vars: |
+            {
+              "gha_artifact_name": "rpms",
+              "gha_repo": "${{ github.repository }}",
+              "gha_workflow": "build-rpm.yml"
+            }
